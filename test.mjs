@@ -14,7 +14,7 @@ const original=globalThis.fetch;let sent;globalThis.fetch=async(url,opts)=>{sent
 assert.equal((await call('auth/request',{email:'eva@example.com'})).status,200);const token=sent.text.match(/login=([a-f0-9]{64})/)[1];assert.equal((await call('auth/request',{email:'eva@example.com'})).status,429);
 const login=await call('auth/verify',{token});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];assert.match(login.headers.get('set-cookie'),/HttpOnly; Secure; SameSite=Lax/);assert.equal((await call('auth/verify',{token})).status,400);
 assert.equal((await call('admin',null,null,cookie)).status,403);
-let r=await call('order',orderData,null,cookie);assert.equal(r.status,200);assert.match(sent.text,/"total": 300/);const myOrders=await (await call('account',null,null,cookie)).json();assert.equal(myOrders.orders.length,1);assert.equal(myOrders.orders[0].total,300);
+let r=await call('order',orderData,null,cookie);assert.equal(r.status,200);assert.match(sent.text,/CELKEM K ÚHRADĚ: 300\s*Kč/);assert.match(sent.html,/<html lang="cs">/);const myOrders=await (await call('account',null,null,cookie)).json();assert.equal(myOrders.orders.length,1);assert.equal(myOrders.orders[0].total,300);
 let previous=sent;assert.equal((await call('order',orderData,null,cookie)).status,200);assert.equal(sent,previous);
 const adminOrders=await (await call('admin',null,'owner@example.com')).json();assert.equal(adminOrders.orders.length,1);assert.equal((await call('admin/order-status',{id:orderData.requestId,status:'Odeslaná'},'owner@example.com')).status,200);
 assert.equal((await call('account')).status,401);
@@ -34,4 +34,11 @@ test('one-use admin setup, password login and test-only checkout',async()=>{
  const passwordRecord=[...db.entries()].find(([k])=>k.startsWith('passwords/'))[1];assert.ok(!passwordRecord.includes('long-test-password'));
  env.TEST_MODE='true';const original=globalThis.fetch;globalThis.fetch=async()=>{throw Error('Demo must not send order emails')};
  response=await call('order',{requestId:crypto.randomUUID(),name:'Test',contact:'test@example.com',address:'Demo',items:[{id:'test',qty:1,variant:'250 g'}]});assert.equal(response.status,200);assert.equal((await response.json()).test,true);globalThis.fetch=original;env.TEST_MODE='false';
+});
+
+test('order emails format prices, escape customer input and hide empty sections',async()=>{
+ const {formatOrderEmail}=await import('./worker/index.js');
+ const order={id:'12345678-abcd-4000-8000-123456789012',date:'2026-11-17T20:01:00Z',name:'<img src=x onerror=alert(1)>',contact:'a&b@example.com',address:'První řádek\nDruhý řádek',note:'',payment:'Dobírka',items:[{name:'AKU vrtačka',price:799,qty:2,variant:''},{name:'Tělové mléko',price:250,qty:1,variant:'500 ml'}],subtotal:1848,shipping:0,codFee:0,total:1848};
+ const e=formatOrderEmail(order,'Můj obchod');assert.match(e.html,/&lt;img/);assert.doesNotMatch(e.html,/<img src=x/);assert.match(e.html,/První řádek<br>Druhý řádek/);assert.match(e.html,/500 ml/);assert.match(e.text,/1\s*848\s*Kč/);assert.doesNotMatch(e.html,/Poznámka zákazníka/);assert.doesNotMatch(e.text,/accountEmail/);assert.match(e.subject,/#12345678/);
+ const withNote=formatOrderEmail({...order,note:'Prosím <zavolat>\npředem'});assert.match(withNote.html,/Prosím &lt;zavolat&gt;<br>předem/);assert.match(withNote.text,/POZNÁMKA ZÁKAZNÍKA/);
 });
